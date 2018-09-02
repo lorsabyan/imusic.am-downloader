@@ -1,64 +1,67 @@
-document.querySelectorAll(".track-element.f_tracks").forEach(function(track) {
-  let title = track.querySelector(".track-title-element");
-  let file = JSON.parse(decodeURIComponent(track.getAttribute("data-im-track-data")));
+(async () => {
+
+  let elm = document.querySelector('li.is_played');
   
-  let album_year = '';
-  
-  let album_section = document.querySelector(".album-info .media-content-year span");
-  
-  if(album_section !== null) {
-    album_year = album_section.innerText.trim().substring(1, 4);
-  }
-  
-  let xhr = new XMLHttpRequest();
-  xhr.open('POST', 'https://imusic.am/dyn/queue/do_get_track', true);
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
-  
-  xhr.onreadystatechange = function() {
-      if(xhr.readyState == XMLHttpRequest.DONE && xhr.status == 200) {
-          let a = JSON.parse(xhr.response);
-          let filename = `${title.innerText.trim()}.${file.type}`;
-          let url = `${a.server_host}/${a.song_session_id}/${a.hash}/${a.stream_name}`;
-          let icon = '<i class="fa fa-cloud-download" aria-hidden="true"></i>';
-          
-          const id3Writer = new ID3Writer(new ArrayBuffer(0));
-          id3Writer.setFrame('TIT2', file.title)
-                   .setFrame('TPE1', file.artists.featuring.map(p => p.artist)
-                             .concat(file.artists.main.map(p => p.artist)))
-                   .setFrame('TALB', file.album_name)
-                   .setFrame('TYER', album_year)
-                   .setFrame('TRCK', file.track_num);
-          
-          id3Writer.addTag();
-          const id3Tag = new Uint8Array(id3Writer.arrayBuffer);
-          
-          link = document.createElement('a');
-          link.classList.add("download");
-          link.style = "padding-right:10px;";
-          link.innerHTML = icon;
-          link.onclick = function() {
-            fetch(url).then(res => {
-            	const fileStream = streamSaver.createWriteStream(filename);
-            	const writer = fileStream.getWriter();
-            	const reader = res.body.getReader();
-            	const pump = () => reader.read()
-            		.then(({ value, done }) => done
-            			? writer.close()
-            			: writer.write(value).then(pump)
-            		);
-            
-            	writer.write(id3Tag).then(() => pump());
-            });
-          };
-          
-          let oldLink = title.querySelector(".download");
-          if(oldLink !== null) {
-            title.removeChild(oldLink);
-          }
-          
-          title.prepend(link);
+  if (elm) {
+    
+    current_track_id = elm.dataset.imItemId;
+
+    if (current_track_id) {
+      
+      let track = await fetch('https://imusic.am/dyn/queue/do_get_track', {
+        method: 'POST',
+        headers: new Headers({
+          'Content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          imtoken: localStorage._im_token
+        }),
+        body: new URLSearchParams({
+          "itemId": current_track_id
+        })
+      }).then(res => res.json());
+
+      let filename = `${track.track_num.toString().padStart(2, '0')}. ${track.title}.mp3`;
+      let url = `https://stream.imusic.am/${Date.now()}/${track.hash}/${filename}`;
+      let artists = track.artists.main.map(p => p.artist);
+      
+      if (track.artists.featuring) {
+        artists.concat(track.artists.featuring.map(p => p.artist));
       }
-  };
-  
-  xhr.send(`itemId=${file.id}`);
-});
+
+      let id3Writer = new ID3Writer(new ArrayBuffer(0));
+
+      id3Writer
+        .setFrame('TIT2', track.title)
+        .setFrame('TPE1', artists)
+        .setFrame('TALB', track.album)
+        .setFrame('COMM', {
+          description: '',
+          text: ''
+        })
+        .setFrame('TRCK', track.track_num);
+
+      id3Writer.addTag();
+
+      let id3Tag = new Uint8Array(id3Writer.arrayBuffer);
+
+      fetch(url, {
+        method: "GET",
+        headers: {
+          "Range": "bytes=0-"
+        },
+      }).then(res => {
+        let fileStream = streamSaver.createWriteStream(filename);
+        let writer = fileStream.getWriter();
+        let reader = res.body.getReader();
+        let pump = () => reader.read()
+          .then(({ value, done }) => done
+            ? writer.close()
+            : writer.write(value).then(pump)
+          );
+
+        writer.write(id3Tag).then(() => pump());
+      });
+
+    }
+  }
+
+})();
